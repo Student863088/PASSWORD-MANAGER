@@ -18,9 +18,9 @@ function daysAgo(timestamp: number | undefined): string {
 function App({ username }: AppProps) {
   const displayName = username.charAt(0).toUpperCase() + username.slice(1)
   const [profilePicture, setProfilePicture] = useState(() => getProfilePicture(username))
-  const [items, setItems] = useState<VaultItem[]>(() => {
-    return getUserPasswords(username)
-  })
+  const [items, setItems] = useState<VaultItem[]>([])
+  const [itemsLoaded, setItemsLoaded] = useState(false)
+  const [storageError, setStorageError] = useState('')
   
   const [selectedId, setSelectedId] = useState(1)
   const [query, setQuery] = useState('')
@@ -33,7 +33,34 @@ function App({ username }: AppProps) {
   const [activePage, setActivePage] = useState<'vault' | 'settings'>('vault')
   const [draft, setDraft] = useState({ name: '', username: '', password: '', url: '', category: 'Personal', notes: '' })
 
-  useEffect(() => saveUserPasswords(username, items), [items, username])
+  useEffect(() => {
+    let cancelled = false
+    getUserPasswords().then((storedItems) => {
+      if (cancelled) return
+      setItems(storedItems)
+      setItemsLoaded(true)
+    }).catch((error: unknown) => {
+      if (cancelled) return
+      setStorageError(error instanceof Error ? error.message : 'Unable to load your vault.')
+    })
+    return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    if (!itemsLoaded) return
+    let cancelled = false
+    const timeout = window.setTimeout(() => {
+      saveUserPasswords(items).then(() => {
+        if (!cancelled) setStorageError('')
+      }).catch((error: unknown) => {
+        if (!cancelled) setStorageError(error instanceof Error ? error.message : 'Unable to save your vault.')
+      })
+    }, 200)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timeout)
+    }
+  }, [items, itemsLoaded])
 
   const categories = ['All items', ...Array.from(new Set(items.map((item) => item.category)))]
   const visibleItems = useMemo(() => items.filter((item) => {
@@ -101,7 +128,7 @@ function App({ username }: AppProps) {
           <button className={`nav-item ${activePage === 'vault' ? 'active' : ''}`} onClick={() => { setActivePage('vault'); setCategory('All items') }}><span>▦</span> All items <b>{items.length}</b></button>
           {categories.slice(1).map((itemCategory) => <button className="nav-item" key={itemCategory} onClick={() => { setActivePage('vault'); setCategory(itemCategory) }}><span>◇</span>{itemCategory}</button>)}
         </nav>
-        <div className="sidebar-bottom"><button className={`nav-item ${activePage === 'settings' ? 'active' : 'muted'}`} onClick={() => setActivePage('settings')}><span>⚙</span> Settings</button><div className="local-note"><span className="status-dot" />Local vault<br /><small>Stored in this browser</small></div></div>
+        <div className="sidebar-bottom"><button className={`nav-item ${activePage === 'settings' ? 'active' : 'muted'}`} onClick={() => setActivePage('settings')}><span>⚙</span> Settings</button><div className="local-note"><span className="status-dot" />Shared CSV vault<br /><small>Demo only — vault passwords are stored as readable text on the server.</small></div></div>
       </aside>
 
       <section className="content">
@@ -109,6 +136,8 @@ function App({ username }: AppProps) {
         {activePage === 'settings' ? <Settings username={username} profilePicture={profilePicture} onProfilePictureChange={setProfilePicture} /> : <div className="workspace">
           <div className="intro"><div><p className="eyebrow">YOUR PRIVATE SPACE</p><h1>Good morning, {displayName} <span>✦</span></h1><p className="subhead">Keep your digital life in one quiet place.</p></div><button className="primary" onClick={openNewItemModal}><span>＋</span> Add item</button></div>
           <div className="section-head"><div><h2>All items <span>{items.length}</span></h2><p>Everything you have saved in your vault</p></div><div className="view-tools"><label className="search"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search vault" /></label><button className="filter" onClick={() => setCategory(category === 'All items' ? 'Development' : 'All items')}>☷ Filter</button></div></div>
+          {storageError && <p className="settings-message error" role="alert">{storageError}</p>}
+          {!itemsLoaded && !storageError && <p role="status">Loading your shared vault...</p>}
           <div className="vault-layout">
             <div className="item-list">{visibleItems.map((item) => <button className={`vault-item ${selected?.id === item.id ? 'selected' : ''}`} key={item.id} onClick={() => { setSelectedId(item.id); setShowPassword(false) }}><span className="site-icon" style={{ background: item.color }}>{item.name.charAt(0)}</span><span className="item-copy"><strong>{item.name}</strong><small>{item.username}</small></span><span className="item-more">•••</span></button>)}{visibleItems.length === 0 && <div className="empty">No items match your search.</div>}</div>
             {selected && <article className="detail-panel"><div className="detail-head"><div className="detail-title"><span className="site-icon large" style={{ background: selected.color }}>{selected.name.charAt(0)}</span><div><h2>{selected.name}</h2><a href={`https://${selected.url}`} target="_blank">{selected.url} ↗</a></div></div><div><button className="icon-button" aria-label="Edit saved item" title="Edit saved item" onClick={() => editItem(selected)}>•••</button></div></div><div className="detail-fields"><div className="field"><label>USERNAME <button onClick={() => copyValue(selected.username, 'username')}>{copied === 'username' ? 'Copied' : 'Copy'}</button></label><p>{selected.username}</p></div><div className="field"><label>PASSWORD <button onClick={() => copyValue(selected.password, 'password')}>{copied === 'password' ? 'Copied' : 'Copy'}</button></label><p className="password"><span>{showPassword ? selected.password : '••••••••••••'}</span><button onClick={() => setShowPassword(!showPassword)}>{showPassword ? 'Hide' : 'Show'}</button></p></div><div className="field"><label>NOTES</label><p className="notes">{selected.notes?.trim() || 'No notes added'}</p></div></div><div className="detail-footer"><div className="item-dates"><small>Created {daysAgo(selected.createdAt)}</small><small>Last edited {selected.lastEditedAt === null ? 'not yet' : selected.lastEditedAt === undefined ? 'not recorded' : daysAgo(selected.lastEditedAt)}</small></div><button className="delete" onClick={deleteSelected}>Delete item</button></div></article>}

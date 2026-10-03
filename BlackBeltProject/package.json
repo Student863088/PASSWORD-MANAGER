@@ -1,5 +1,9 @@
 {
-  "dependencies": {
-    "@prisma/client": "^7.10.0"
+  "name": "password-manager",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node backend/server.mjs",
+    "build": "npm --prefix frontend run build"
   }
 }

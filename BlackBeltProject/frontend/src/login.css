@@ -7,3 +7,4 @@
 @keyframes card-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 @media (max-width: 500px) { .login-card { padding: 30px 25px 25px; }.login-brand { margin-bottom: 28px; } }
 .text-input { display: flex; align-items: center; gap: 8px; padding: 10px 11px; margin-bottom: 14px; border: 1px solid #d7e5dc; border-radius: 7px; background: white; }.text-input > span { color: #9cada5; font-size: 14px; }.text-input input { width: 100%; border: 0; outline: 0; color: #355149; background: transparent; font: 12px 'Manrope', sans-serif; }
+.login-warning { padding: 9px 11px; border-radius: 6px; color: #8a6257; background: #fff4ea; font-size: 10px; line-height: 1.5; }
