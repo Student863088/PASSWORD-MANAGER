@@ -12,7 +12,7 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
 	const headers = new Headers(init.headers)
 	headers.set('Content-Type', 'application/json')
 	const token = localStorage.getItem(TOKEN_KEY)
-	if (token) headers.set('Authorization', `Bearer ${token}`)
+	if (token && !headers.has('Authorization')) headers.set('Authorization', `Bearer ${token}`)
 
 	const response = await fetch(`/api${path}`, { ...init, headers })
 	const result: unknown = await response.json().catch(() => ({}))

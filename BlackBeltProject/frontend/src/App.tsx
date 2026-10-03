@@ -4,9 +4,10 @@ import { getUserPasswords, saveUserPasswords } from './Database'
 import type { VaultItem } from './Database'
 import { clearCurrentUser, getProfilePicture } from './user'
 import Settings from './Settings.tsx'
+import Admin from './Admin.tsx'
 import './App.css'
 
-type AppProps = { username: string }
+type AppProps = { username: string; userId: string }
 
 function daysAgo(timestamp: number | undefined): string {
   if (timestamp === undefined) return 'Date unavailable'
@@ -15,7 +16,7 @@ function daysAgo(timestamp: number | undefined): string {
   return `${days} day${days === 1 ? '' : 's'} ago`
 }
 
-function App({ username }: AppProps) {
+function App({ username, userId }: AppProps) {
   const displayName = username.charAt(0).toUpperCase() + username.slice(1)
   const [profilePicture, setProfilePicture] = useState(() => getProfilePicture(username))
   const [items, setItems] = useState<VaultItem[]>([])
@@ -30,7 +31,7 @@ function App({ username }: AppProps) {
   const [editingId, setEditingId] = useState<number | null>(null)
   const [copied, setCopied] = useState('')
   const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false)
-  const [activePage, setActivePage] = useState<'vault' | 'settings'>('vault')
+  const [activePage, setActivePage] = useState<'vault' | 'settings' | 'admin'>('vault')
   const [draft, setDraft] = useState({ name: '', username: '', password: '', url: '', category: 'Personal', notes: '' })
 
   useEffect(() => {
@@ -132,8 +133,8 @@ function App({ username }: AppProps) {
       </aside>
 
       <section className="content">
-        <header className="topbar"><div className="breadcrumbs"><span>Vault</span><span>/</span><strong>{activePage === 'settings' ? 'Settings' : 'All items'}</strong></div><div className="top-actions"><div className="account-menu"><button className="avatar mini" type="button" aria-label="Open account menu" aria-haspopup="menu" aria-expanded={isAccountMenuOpen} onClick={() => setIsAccountMenuOpen((open) => !open)}>{profilePicture ? <img src={profilePicture} alt="" /> : username.slice(0, 2).toUpperCase()}</button>{isAccountMenuOpen && <div className="account-menu-popover" role="menu"><button type="button" role="menuitem" onClick={signOut}>Sign out</button></div>}</div></div></header>
-        {activePage === 'settings' ? <Settings username={username} profilePicture={profilePicture} onProfilePictureChange={setProfilePicture} /> : <div className="workspace">
+        <header className="topbar"><div className="breadcrumbs"><span>Vault</span><span>/</span><strong>{activePage === 'settings' ? 'Settings' : activePage === 'admin' ? 'Admin' : 'All items'}</strong></div><div className="top-actions"><button className={`admin-nav-button ${activePage === 'admin' ? 'active' : ''}`} type="button" onClick={() => setActivePage('admin')}>Admin</button><div className="account-menu"><button className="avatar mini" type="button" aria-label="Open account menu" aria-haspopup="menu" aria-expanded={isAccountMenuOpen} onClick={() => setIsAccountMenuOpen((open) => !open)}>{profilePicture ? <img src={profilePicture} alt="" /> : username.slice(0, 2).toUpperCase()}</button>{isAccountMenuOpen && <div className="account-menu-popover" role="menu"><button type="button" role="menuitem" onClick={signOut}>Sign out</button></div>}</div></div></header>
+        {activePage === 'settings' ? <Settings username={username} isDemo={userId === 'demo'} profilePicture={profilePicture} onProfilePictureChange={setProfilePicture} /> : activePage === 'admin' ? <Admin /> : <div className="workspace">
           <div className="intro"><div><p className="eyebrow">YOUR PRIVATE SPACE</p><h1>Good morning, {displayName} <span>✦</span></h1><p className="subhead">Keep your digital life in one quiet place.</p></div><button className="primary" onClick={openNewItemModal}><span>＋</span> Add item</button></div>
           <div className="section-head"><div><h2>All items <span>{items.length}</span></h2><p>Everything you have saved in your vault</p></div><div className="view-tools"><label className="search"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search vault" /></label><button className="filter" onClick={() => setCategory(category === 'All items' ? 'Development' : 'All items')}>☷ Filter</button></div></div>
           {storageError && <p className="settings-message error" role="alert">{storageError}</p>}

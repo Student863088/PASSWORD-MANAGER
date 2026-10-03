@@ -34,6 +34,10 @@ export function saveProfilePicture(username: string, image: string | null): void
 	}
 }
 
+export function removeProfilePicture(username: string): void {
+	localStorage.removeItem(profilePictureKey(username))
+}
+
 function saveCurrentUser(user: User): void {
 	localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user))
 }
@@ -84,6 +88,15 @@ export async function updateAccount(
 	}
 	saveCurrentUser(response.user)
 	return response.user
+}
+
+export async function deleteAccount(passphrase: string, username: string): Promise<void> {
+	await apiRequest<{ deleted: boolean }>('/account', {
+		method: 'DELETE',
+		body: JSON.stringify({ passphrase }),
+	})
+	removeProfilePicture(username)
+	clearCurrentUser()
 }
 
 export function getCurrentUser(): User | null {

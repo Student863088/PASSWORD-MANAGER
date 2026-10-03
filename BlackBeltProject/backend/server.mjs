@@ -14,7 +14,9 @@ const vaultFile = join(dataDirectory, 'vault.csv')
 const demoUsersFile = join(dataDirectory, 'demo_users.csv')
 const demoVaultFile = join(dataDirectory, 'demo_vault.csv')
 const port = Number(process.env.PORT ?? 3001)
+const adminPassword = process.env.Admin_Pass
 const sessions = new Map()
+const adminSessions = new Set()
 const userHeaders = ['id', 'username', 'createdAt', 'salt', 'passwordHash']
 const demoUserHeaders = ['id', 'username', 'createdAt']
 const vaultHeaders = [
@@ -175,6 +177,22 @@ function authorizedUser(request, response) {
 	return userId
 }
 
+function authorizedAdmin(request, response) {
+	const authorization = request.headers.authorization
+	const token = authorization?.startsWith('Bearer ') ? authorization.slice(7) : ''
+	if (!adminSessions.has(token)) {
+		send(response, 401, { error: 'Admin sign-in required.' })
+		return false
+	}
+	return true
+}
+
+function passwordsMatch(actual, expected) {
+	const actualBuffer = Buffer.from(actual)
+	const expectedBuffer = Buffer.from(expected)
+	return actualBuffer.length === expectedBuffer.length && timingSafeEqual(actualBuffer, expectedBuffer)
+}
+
 function isValidUsername(username) {
 	return /^[a-z0-9._-]{3,32}$/.test(username)
 }
@@ -239,6 +257,149 @@ const server = createServer(async (request, response) => {
 
 		if (request.method === 'GET' && path === '/api/health') {
 			send(response, 200, { ok: true })
+			return
+		}
+
+		if (request.method === 'POST' && path === '/api/admin/login') {
+			if (!adminPassword) {
+				send(response, 503, { error: 'Admin access is disabled. Set Admin_Pass on the server.' })
+				return
+			}
+			const body = await readJson(request)
+			if (!passwordsMatch(String(body.password ?? ''), adminPassword)) {
+				send(response, 401, { error: 'Admin password is incorrect.' })
+				return
+			}
+			const token = randomBytes(32).toString('hex')
+			adminSessions.add(token)
+			send(response, 200, { token })
+			return
+		}
+
+		if (path === '/api/admin/session' || path === '/api/admin/accounts' || path.startsWith('/api/admin/accounts/')) {
+			if (!authorizedAdmin(request, response)) return
+
+			if (request.method === 'DELETE' && path === '/api/admin/session') {
+				const token = request.headers.authorization?.slice(7) ?? ''
+				adminSessions.delete(token)
+				send(response, 200, { ok: true })
+				return
+			}
+
+			if (request.method === 'GET' && path === '/api/admin/accounts') {
+				const accounts = await withStoreLock(async () => {
+					const users = await readRows(usersFile, userHeaders)
+					const vaultRows = await readRows(vaultFile, vaultHeaders)
+					return users.map((user) => ({
+						...publicUser(user),
+						entries: vaultRows.filter((row) => row.userId === user.id).map((row) => ({
+							id: Number(row.id),
+							name: row.name,
+							username: row.username,
+							website: row.website ?? row.url ?? '',
+							category: row.category,
+							color: row.color,
+							notes: row.notes,
+							createdAt: row.createdAt === '' ? null : Number(row.createdAt),
+							lastEditedAt: row.lastEditedAt === '' ? null : Number(row.lastEditedAt),
+						})),
+					}))
+				})
+				send(response, 200, { accounts })
+				return
+			}
+
+			if (request.method === 'POST' && path === '/api/admin/accounts') {
+				const body = await readJson(request)
+				const username = normalizedUsername(String(body.username ?? ''))
+				const passphrase = String(body.passphrase ?? '')
+				if (!isValidUsername(username)) {
+					send(response, 400, { error: 'Username must be 3 to 32 characters and use letters, numbers, dots, underscores, or hyphens.' })
+					return
+				}
+				if (passphrase.length < 8) {
+					send(response, 400, { error: 'Passphrase must be at least 8 characters.' })
+					return
+				}
+				const result = await withStoreLock(async () => {
+					const users = await readRows(usersFile, userHeaders)
+					if (users.some((user) => user.username === username)) {
+						return { status: 409, error: 'That username is already in use.' }
+					}
+					const salt = randomBytes(16).toString('hex')
+					const account = {
+						id: randomUUID(),
+						username,
+						createdAt: String(Date.now()),
+						salt,
+						passwordHash: await hashPassphrase(passphrase, salt),
+					}
+					await writeRows(usersFile, [...users, account], userHeaders)
+					return { account: { ...publicUser(account), entries: [] } }
+				})
+				if (result.error) {
+					send(response, result.status, { error: result.error })
+					return
+				}
+				send(response, 201, { account: result.account })
+				return
+			}
+
+			const accountPath = path.match(/^\/api\/admin\/accounts\/([^/]+)$/)
+			if (accountPath && (request.method === 'PATCH' || request.method === 'DELETE')) {
+				const accountId = decodeURIComponent(accountPath[1])
+				const body = request.method === 'PATCH' ? await readJson(request) : null
+				const result = await withStoreLock(async () => {
+					const users = await readRows(usersFile, userHeaders)
+					const index = users.findIndex((user) => user.id === accountId)
+					if (index < 0) return { status: 404, error: 'Account not found.' }
+
+					if (request.method === 'PATCH') {
+						const account = users[index]
+						const username = typeof body.username === 'string' && body.username.trim()
+							? normalizedUsername(body.username)
+							: account.username
+						const passphrase = typeof body.passphrase === 'string' ? body.passphrase : ''
+						if (!isValidUsername(username)) {
+							return { status: 400, error: 'Username must be 3 to 32 characters and use letters, numbers, dots, underscores, or hyphens.' }
+						}
+						if (users.some((user, userIndex) => userIndex !== index && user.username === username)) {
+							return { status: 409, error: 'That username is already in use.' }
+						}
+						if (passphrase && passphrase.length < 8) {
+							return { status: 400, error: 'Passphrase must be at least 8 characters.' }
+						}
+						if (username === account.username && !passphrase) {
+							return { status: 400, error: 'Enter a new username or passphrase to make a change.' }
+						}
+						const updated = { ...account, username }
+						if (passphrase) {
+							updated.salt = randomBytes(16).toString('hex')
+							updated.passwordHash = await hashPassphrase(passphrase, updated.salt)
+						}
+						users[index] = updated
+						await writeRows(usersFile, users, userHeaders)
+						return { account: { ...publicUser(updated), entries: [] } }
+					}
+
+					const vaultRows = await readRows(vaultFile, vaultHeaders)
+					await writeRows(vaultFile, vaultRows.filter((row) => row.userId !== accountId), vaultHeaders)
+					users.splice(index, 1)
+					await writeRows(usersFile, users, userHeaders)
+					for (const [token, userId] of sessions) {
+						if (userId === accountId) sessions.delete(token)
+					}
+					return { deleted: true }
+				})
+				if (result.error) {
+					send(response, result.status, { error: result.error })
+					return
+				}
+				send(response, 200, result)
+				return
+			}
+
+			send(response, 404, { error: 'API endpoint not found.' })
 			return
 		}
 
@@ -386,6 +547,33 @@ const server = createServer(async (request, response) => {
 					return
 				}
 				send(response, 200, { user: result.user })
+				return
+			}
+
+			if (request.method === 'DELETE' && path === '/api/account' && userId !== 'demo') {
+				const body = await readJson(request)
+				const result = await withStoreLock(async () => {
+					const users = await readRows(usersFile, userHeaders)
+					const account = users.find((user) => user.id === userId)
+					if (!account) return { status: 404, error: 'Account not found.' }
+					const actualHash = Buffer.from(await hashPassphrase(String(body.passphrase ?? ''), account.salt), 'hex')
+					const expectedHash = Buffer.from(account.passwordHash, 'hex')
+					if (actualHash.length !== expectedHash.length || !timingSafeEqual(actualHash, expectedHash)) {
+						return { status: 401, error: 'Passphrase is incorrect.' }
+					}
+					const vaultRows = await readRows(vaultFile, vaultHeaders)
+					await writeRows(vaultFile, vaultRows.filter((row) => row.userId !== userId), vaultHeaders)
+					await writeRows(usersFile, users.filter((user) => user.id !== userId), userHeaders)
+					for (const [token, sessionUserId] of sessions) {
+						if (sessionUserId === userId) sessions.delete(token)
+					}
+					return { deleted: true }
+				})
+				if (result.error) {
+					send(response, result.status, { error: result.error })
+					return
+				}
+				send(response, 200, { deleted: true })
 				return
 			}
 

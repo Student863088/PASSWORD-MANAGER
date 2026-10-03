@@ -1,16 +1,17 @@
 import { useState } from 'react'
 import type { ChangeEvent } from 'react'
 import type { FormEvent } from 'react'
-import { saveProfilePicture, updateAccount } from './user'
+import { deleteAccount, saveProfilePicture, updateAccount } from './user'
 import './App.css'
 
 type SettingsProps = {
 	username: string
+	isDemo: boolean
 	profilePicture: string | null
 	onProfilePictureChange: (image: string | null) => void
 }
 
-function Settings({ username, profilePicture, onProfilePictureChange }: SettingsProps) {
+function Settings({ username, isDemo, profilePicture, onProfilePictureChange }: SettingsProps) {
 	const [currentPassphrase, setCurrentPassphrase] = useState('')
 	const [newUsername, setNewUsername] = useState(username)
 	const [newPassphrase, setNewPassphrase] = useState('')
@@ -20,6 +21,10 @@ function Settings({ username, profilePicture, onProfilePictureChange }: Settings
 	const [pictureMessage, setPictureMessage] = useState('')
 	const [isPictureError, setIsPictureError] = useState(false)
 	const [pendingProfilePicture, setPendingProfilePicture] = useState<string | null>(null)
+	const [deletePassphrase, setDeletePassphrase] = useState('')
+	const [isDeleting, setIsDeleting] = useState(false)
+	const [deleteMessage, setDeleteMessage] = useState('')
+	const [isDeleteError, setIsDeleteError] = useState(false)
 
 	function handleProfilePictureChange(event: ChangeEvent<HTMLInputElement>) {
 		const file = event.target.files?.[0]
@@ -99,6 +104,21 @@ function Settings({ username, profilePicture, onProfilePictureChange }: Settings
 		}
 	}
 
+	async function handleDeleteAccount() {
+		if (!window.confirm('Permanently delete your account and all of its saved vault entries? This cannot be undone.')) return
+		setIsDeleting(true)
+		setIsDeleteError(false)
+		setDeleteMessage('')
+		try {
+			await deleteAccount(deletePassphrase, username)
+			window.location.reload()
+		} catch (error) {
+			setIsDeleteError(true)
+			setDeleteMessage(error instanceof Error ? error.message : 'Unable to delete this account.')
+			setIsDeleting(false)
+		}
+	}
+
 	return (
 		<div className="settings-page">
 			<header className="settings-heading">
@@ -124,9 +144,10 @@ function Settings({ username, profilePicture, onProfilePictureChange }: Settings
 					{pictureMessage && <p className={`settings-message ${isPictureError ? 'error' : ''}`} role={isPictureError ? 'alert' : 'status'}>{pictureMessage}</p>}
 				</div>
 			</section>
-			{username === 'demo' ? (
+			{isDemo ? (
 				<p className="settings-notice">The demo vault is not linked to a registered account. Sign out and create an account to edit sign-in details.</p>
 			) : (
+				<>
 				<form className="settings-form" onSubmit={handleSubmit}>
 					<label className="settings-field">
 						<span>Current passphrase</span>
@@ -144,6 +165,17 @@ function Settings({ username, profilePicture, onProfilePictureChange }: Settings
 					{message && <p className={`settings-message ${isError ? 'error' : ''}`} role={isError ? 'alert' : 'status'}>{message}</p>}
 					<div className="settings-actions"><button type="submit" className="primary" disabled={isSaving}>{isSaving ? 'Saving...' : 'Save changes'}</button></div>
 				</form>
+				<section className="settings-danger" aria-labelledby="delete-account-heading">
+					<h2 id="delete-account-heading">Delete account</h2>
+					<p>This permanently removes your sign-in account and all saved vault entries. Enter your current passphrase to confirm.</p>
+					<label className="settings-field">
+						<span>Current passphrase</span>
+						<input type="password" autoComplete="current-password" value={deletePassphrase} onChange={(event) => setDeletePassphrase(event.target.value)} required />
+					</label>
+					{deleteMessage && <p className={`settings-message ${isDeleteError ? 'error' : ''}`} role={isDeleteError ? 'alert' : 'status'}>{deleteMessage}</p>}
+					<button type="button" className="danger-button" onClick={handleDeleteAccount} disabled={isDeleting || !deletePassphrase}>{isDeleting ? 'Deleting...' : 'Delete my account'}</button>
+				</section>
+				</>
 			)}
 		</div>
 	)

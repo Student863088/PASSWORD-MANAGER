@@ -9,7 +9,7 @@ const currentUser = getCurrentUser()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    {currentUser ? <App username={currentUser.username} /> : <Login onUnlock={() => {
+    {currentUser ? <App username={currentUser.username} userId={currentUser.id} /> : <Login onUnlock={() => {
       window.location.reload()
     }} />}
   </StrictMode>,
