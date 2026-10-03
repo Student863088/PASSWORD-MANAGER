@@ -11,9 +11,12 @@ const backendDirectory = fileURLToPath(new URL('.', import.meta.url))
 const dataDirectory = resolve(process.env.DATA_DIR ?? join(backendDirectory, 'data'))
 const usersFile = join(dataDirectory, 'users.csv')
 const vaultFile = join(dataDirectory, 'vault.csv')
+const demoUsersFile = join(dataDirectory, 'demo_users.csv')
+const demoVaultFile = join(dataDirectory, 'demo_vault.csv')
 const port = Number(process.env.PORT ?? 3001)
 const sessions = new Map()
 const userHeaders = ['id', 'username', 'createdAt', 'salt', 'passwordHash']
+const demoUserHeaders = ['id', 'username', 'createdAt']
 const vaultHeaders = [
 	'userId', 'id', 'name', 'username', 'password', 'website', 'category', 'color',
 	'notes', 'createdAt', 'lastEditedAt',
@@ -289,6 +292,11 @@ const server = createServer(async (request, response) => {
 		}
 
 		if (request.method === 'POST' && path === '/api/demo') {
+			const demoUsers = await readRows(demoUsersFile, demoUserHeaders)
+			if (!demoUsers.some((user) => user.id === 'demo')) {
+				send(response, 503, { error: 'The demo account is not available.' })
+				return
+			}
 			const token = randomBytes(32).toString('hex')
 			sessions.set(token, 'demo')
 			send(response, 200, { user: { id: 'demo', username: 'demo', createdAt: 0 }, token })
@@ -300,7 +308,7 @@ const server = createServer(async (request, response) => {
 			if (!userId) return
 
 			if (request.method === 'GET' && path === '/api/vault') {
-				const rows = await readRows(vaultFile, vaultHeaders)
+				const rows = await readRows(userId === 'demo' ? demoVaultFile : vaultFile, vaultHeaders)
 				const items = rows.filter((row) => row.userId === userId).map((row) => ({
 					id: Number(row.id),
 					name: row.name,
@@ -319,14 +327,15 @@ const server = createServer(async (request, response) => {
 
 			if (request.method === 'PUT' && path === '/api/vault') {
 				const items = cleanVaultItems((await readJson(request)).items)
+				const targetVaultFile = userId === 'demo' ? demoVaultFile : vaultFile
 				await withStoreLock(async () => {
-					const rows = await readRows(vaultFile, vaultHeaders)
+					const rows = await readRows(targetVaultFile, vaultHeaders)
 					const otherUsers = rows.filter((row) => row.userId !== userId).map((row) => ({
 						...row,
 						website: row.website ?? row.url ?? '',
 					}))
 					const ownRows = items.map(({ url, ...item }) => ({ userId, ...item, website: url }))
-					await writeRows(vaultFile, [...otherUsers, ...ownRows], vaultHeaders)
+					await writeRows(targetVaultFile, [...otherUsers, ...ownRows], vaultHeaders)
 				})
 				send(response, 200, { ok: true })
 				return
@@ -400,16 +409,31 @@ const server = createServer(async (request, response) => {
 })
 
 await mkdir(dataDirectory, { recursive: true })
-const vaultRows = await readRows(vaultFile, vaultHeaders)
-const vaultContent = await readFile(vaultFile, 'utf8')
-const vaultHeader = vaultContent.split(/\r?\n/, 1)[0]
-if (vaultHeader !== vaultHeaders.join(',')) {
-	await writeRows(vaultFile, vaultRows.map(({ url, ...row }) => ({
-		...row,
-		website: row.website ?? url ?? '',
-	})), vaultHeaders)
-}
-await readRows(usersFile, userHeaders)
+await withStoreLock(async () => {
+	const users = await readRows(usersFile, userHeaders)
+	const demoUsers = await readRows(demoUsersFile, demoUserHeaders)
+	if (!demoUsers.some((user) => user.id === 'demo')) {
+		await writeRows(demoUsersFile, [...demoUsers, { id: 'demo', username: 'demo', createdAt: '0' }], demoUserHeaders)
+	}
+
+	const vaultRows = await readRows(vaultFile, vaultHeaders)
+	const demoVaultRows = await readRows(demoVaultFile, vaultHeaders)
+	const migratedDemoRows = vaultRows.filter((row) => row.userId === 'demo')
+	const migratedUserRows = vaultRows.filter((row) => row.userId !== 'demo')
+	const normalizeWebsite = ({ url, ...row }) => ({ ...row, website: row.website ?? url ?? '' })
+	const existingDemoIds = new Set(demoVaultRows.map((row) => row.id))
+	const combinedDemoRows = [
+		...demoVaultRows.map(normalizeWebsite),
+		...migratedDemoRows.filter((row) => !existingDemoIds.has(row.id)).map(normalizeWebsite),
+	]
+
+	const existingVaultHeaders = await readFile(vaultFile, 'utf8').then((content) => content.split(/\r?\n/, 1)[0])
+	if (migratedDemoRows.length || existingVaultHeaders !== vaultHeaders.join(',')) {
+		await writeRows(vaultFile, migratedUserRows.map(normalizeWebsite), vaultHeaders)
+	}
+	await writeRows(demoVaultFile, combinedDemoRows, vaultHeaders)
+	console.log(`Loaded ${users.length} users and ${combinedDemoRows.length} demo vault entries.`)
+})
 server.listen(port, () => {
 	console.log(`Password Manager API listening on http://localhost:${port}`)
 	console.log(`CSV data files: ${dataDirectory}`)
