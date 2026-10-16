@@ -49,12 +49,10 @@ function Login({ onUnlock }: LoginProps) {
 			<div className="login-orbit orbit-one" />
 			<div className="login-orbit orbit-two" />
 			<section className="login-card">
-				<div className="login-brand"><span className="brand-mark">S</span><span>Syncript</span></div>
-				<div className="login-brand"><img className="login-brand-logo" src="/logo.png" alt="Syncript" /></div>
+				<div className="login-brand login-brand-2"><img className="login-brand-logo" src="/logo.png" alt="Syncript" /></div>
 				<p className="login-eyebrow">YOUR PRIVATE SPACE</p>
 				<h1>{isSigningUp ? 'Create your vault' : 'Welcome back'}</h1>
 				<p className="login-copy">{isSigningUp ? 'Set up your private space in a few seconds.' : 'Your vault is ready when you are.'}<br />Your data is stored on this server.</p>
-				<p className="login-warning">Demo only: saved website passwords are stored as readable text in the server CSV.</p>
 				<form onSubmit={handleSubmit}>
 					<label className="login-label" htmlFor="username">USERNAME</label>
 					<div className="text-input"><span>@</span><input id="username" type="text" value={username} onChange={(event) => setUsername(event.target.value)} placeholder={isSigningUp ? 'Choose a username' : 'Your username'} autoComplete="username" required minLength={3} maxLength={32} /></div>
@@ -71,7 +69,6 @@ function Login({ onUnlock }: LoginProps) {
 				{!isSigningUp && <button className="demo-button" type="button" onClick={handleDemo}>Open demo vault</button>}
 				<div className="login-footer"><span className="status-dot" />Shared server storage <span className="footer-divider">·</span> Demo data only</div>
 			</section>
-			<p className="login-note">A calm place for your credentials.</p>
 		</main>
 	)
 }
