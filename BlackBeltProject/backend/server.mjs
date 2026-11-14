@@ -1,18 +1,18 @@
 import { randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto'
 import { promisify } from 'node:util'
 import { createReadStream } from 'node:fs'
-import { mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises'
+import { stat } from 'node:fs/promises'
 import { createServer } from 'node:http'
-import { extname, join, resolve, sep } from 'node:path'
+import { extname, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { checkDatabase, initializeDatabase, readRows, withStoreLock, writeRows } from './storage.mjs'
 
 const scrypt = promisify(scryptCallback)
 const backendDirectory = fileURLToPath(new URL('.', import.meta.url))
-const dataDirectory = resolve(process.env.DATA_DIR ?? join(backendDirectory, 'data'))
-const usersFile = join(dataDirectory, 'users.csv')
-const vaultFile = join(dataDirectory, 'vault.csv')
-const demoUsersFile = join(dataDirectory, 'demo_users.csv')
-const demoVaultFile = join(dataDirectory, 'demo_vault.csv')
+const usersFile = 'users'
+const vaultFile = 'vault'
+const demoUsersFile = 'demoUsers'
+const demoVaultFile = 'demoVault'
 const port = Number(process.env.PORT ?? 3001)
 const adminPassword = process.env.Admin_Pass
 const sessions = new Map()
@@ -31,96 +31,6 @@ const mimeTypes = {
 	'.json': 'application/json; charset=utf-8',
 	'.png': 'image/png',
 	'.svg': 'image/svg+xml',
-}
-
-let writeQueue = Promise.resolve()
-
-function withStoreLock(operation) {
-	const result = writeQueue.then(operation, operation)
-	writeQueue = result.then(() => undefined, () => undefined)
-	return result
-}
-
-function encodeCsvValue(value) {
-	const text = value == null ? '' : String(value)
-	return /[",\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text
-}
-
-function encodeCsv(rows, headers) {
-	return `${headers.join(',')}\r\n${rows.map((row) =>
-		headers.map((header) => encodeCsvValue(row[header])).join(','),
-	).join('\r\n')}${rows.length ? '\r\n' : ''}`
-}
-
-function decodeCsv(text) {
-	const records = []
-	let record = []
-	let field = ''
-	let quoted = false
-
-	for (let index = 0; index < text.length; index += 1) {
-		const character = text[index]
-		if (quoted) {
-			if (character === '"' && text[index + 1] === '"') {
-				field += '"'
-				index += 1
-			} else if (character === '"') {
-				quoted = false
-			} else {
-				field += character
-			}
-		} else if (character === '"' && field.length === 0) {
-			quoted = true
-		} else if (character === ',') {
-			record.push(field)
-			field = ''
-		} else if (character === '\n' || character === '\r') {
-			record.push(field)
-			if (record.some((value) => value !== '')) records.push(record)
-			record = []
-			field = ''
-			if (character === '\r' && text[index + 1] === '\n') index += 1
-		} else {
-			field += character
-		}
-	}
-
-	if (field.length || record.length) {
-		record.push(field)
-		if (record.some((value) => value !== '')) records.push(record)
-	}
-
-	const [headers, ...rows] = records
-	if (!headers) return []
-	return rows.map((values) => Object.fromEntries(headers.map((header, index) => [header, values[index] ?? ''])))
-}
-
-async function readRows(file, headers) {
-	try {
-		const content = await readFile(file, 'utf8')
-		return decodeCsv(content)
-	} catch (error) {
-		if (error.code === 'ENOENT') {
-			await writeFileAtomically(file, encodeCsv([], headers))
-			return []
-		}
-		throw error
-	}
-}
-
-async function writeFileAtomically(file, content) {
-	const temporaryFile = `${file}.${randomUUID()}.tmp`
-	try {
-		await writeFile(temporaryFile, content, 'utf8')
-		await rename(temporaryFile, file)
-	} catch (error) {
-		await unlink(temporaryFile).catch(() => {})
-		throw error
-	}
-}
-
-async function writeRows(file, rows, headers) {
-	await writeFileAtomically(file, encodeCsv(rows, headers))
 }
 
 function normalizedUsername(value) {
@@ -256,6 +166,7 @@ const server = createServer(async (request, response) => {
 		const path = url.pathname
 
 		if (request.method === 'GET' && path === '/api/health') {
+			await checkDatabase()
 			send(response, 200, { ok: true })
 			return
 		}
@@ -596,33 +507,8 @@ const server = createServer(async (request, response) => {
 	}
 })
 
-await mkdir(dataDirectory, { recursive: true })
-await withStoreLock(async () => {
-	const users = await readRows(usersFile, userHeaders)
-	const demoUsers = await readRows(demoUsersFile, demoUserHeaders)
-	if (!demoUsers.some((user) => user.id === 'demo')) {
-		await writeRows(demoUsersFile, [...demoUsers, { id: 'demo', username: 'demo', createdAt: '0' }], demoUserHeaders)
-	}
-
-	const vaultRows = await readRows(vaultFile, vaultHeaders)
-	const demoVaultRows = await readRows(demoVaultFile, vaultHeaders)
-	const migratedDemoRows = vaultRows.filter((row) => row.userId === 'demo')
-	const migratedUserRows = vaultRows.filter((row) => row.userId !== 'demo')
-	const normalizeWebsite = ({ url, ...row }) => ({ ...row, website: row.website ?? url ?? '' })
-	const existingDemoIds = new Set(demoVaultRows.map((row) => row.id))
-	const combinedDemoRows = [
-		...demoVaultRows.map(normalizeWebsite),
-		...migratedDemoRows.filter((row) => !existingDemoIds.has(row.id)).map(normalizeWebsite),
-	]
-
-	const existingVaultHeaders = await readFile(vaultFile, 'utf8').then((content) => content.split(/\r?\n/, 1)[0])
-	if (migratedDemoRows.length || existingVaultHeaders !== vaultHeaders.join(',')) {
-		await writeRows(vaultFile, migratedUserRows.map(normalizeWebsite), vaultHeaders)
-	}
-	await writeRows(demoVaultFile, combinedDemoRows, vaultHeaders)
-	console.log(`Loaded ${users.length} users and ${combinedDemoRows.length} demo vault entries.`)
-})
+await initializeDatabase()
 server.listen(port, () => {
 	console.log(`Password Manager API listening on http://localhost:${port}`)
-	console.log(`CSV data files: ${dataDirectory}`)
+	console.log(`CSV data files: ${resolve(backendDirectory, 'data')}`)
 })

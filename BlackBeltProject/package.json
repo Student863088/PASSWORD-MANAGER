@@ -5,5 +5,8 @@
   "scripts": {
     "start": "node backend/server.mjs",
     "build": "npm --prefix frontend run build"
+  },
+  "dependencies": {
+    "pg": "^8.23.1"
   }
 }

@@ -9,6 +9,24 @@ import './App.css'
 
 type AppProps = { username: string; userId: string }
 
+function generateRandomPassword(): string {
+  const characters = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()-_=+[]{};:,.?'
+  const passwordLength = 20
+  const cutoff = Math.floor(256 / characters.length) * characters.length
+  const password: string[] = []
+
+  while (password.length < passwordLength) {
+    const randomBytes = new Uint8Array(passwordLength - password.length)
+    window.crypto.getRandomValues(randomBytes)
+    for (const byte of randomBytes) {
+      if (byte < cutoff) password.push(characters[byte % characters.length])
+      if (password.length === passwordLength) break
+    }
+  }
+
+  return password.join('')
+}
+
 function daysAgo(timestamp: number | undefined): string {
   if (timestamp === undefined) return 'Date unavailable'
   const days = Math.max(0, Math.floor((Date.now() - timestamp) / 86_400_000))
@@ -30,6 +48,8 @@ function App({ username, userId }: AppProps) {
   const [isAdding, setIsAdding] = useState(false)
   const [editingId, setEditingId] = useState<number | null>(null)
   const [copied, setCopied] = useState('')
+  const [generatedPassword, setGeneratedPassword] = useState('')
+  const [generatorMessage, setGeneratorMessage] = useState('')
   const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false)
   const [activePage, setActivePage] = useState<'vault' | 'settings' | 'admin'>('vault')
   const [draft, setDraft] = useState({ name: '', username: '', password: '', url: '', category: 'Personal', notes: '' })
@@ -74,6 +94,24 @@ function App({ username, userId }: AppProps) {
     navigator.clipboard?.writeText(value)
     setCopied(label)
     window.setTimeout(() => setCopied(''), 1400)
+  }
+
+  function generatePassword() {
+    try {
+      setGeneratedPassword(generateRandomPassword())
+      setGeneratorMessage('')
+    } catch (error) {
+      setGeneratorMessage(error instanceof Error ? error.message : 'Unable to generate a password.')
+    }
+  }
+
+  async function copyGeneratedPassword() {
+    try {
+      await navigator.clipboard.writeText(generatedPassword)
+      setGeneratorMessage('Copied to clipboard.')
+    } catch {
+      setGeneratorMessage('Unable to copy the password. Check clipboard permissions.')
+    }
   }
 
   function addItem(event: FormEvent) {
@@ -129,6 +167,16 @@ function App({ username, userId }: AppProps) {
           <button className={`nav-item ${activePage === 'vault' ? 'active' : ''}`} onClick={() => { setActivePage('vault'); setCategory('All items') }}><span>▦</span> All items <b>{items.length}</b></button>
           {categories.slice(1).map((itemCategory) => <button className="nav-item" key={itemCategory} onClick={() => { setActivePage('vault'); setCategory(itemCategory) }}><span>◇</span>{itemCategory}</button>)}
         </nav>
+        <section className="password-generator" aria-labelledby="password-generator-title">
+          <h2 id="password-generator-title">Password generator</h2>
+          <p>Make a strong, random password.</p>
+          <output className="generated-password" aria-live="polite">{generatedPassword || 'Your password will appear here'}</output>
+          <div className="generator-actions">
+            <button type="button" onClick={generatePassword}>Generate</button>
+            <button type="button" onClick={copyGeneratedPassword} disabled={!generatedPassword}>Copy</button>
+          </div>
+          {generatorMessage && <p className="generator-message" role="status">{generatorMessage}</p>}
+        </section>
         <div className="sidebar-bottom"><button className={`nav-item ${activePage === 'settings' ? 'active' : 'muted'}`} onClick={() => setActivePage('settings')}><span>⚙</span> Settings</button><div className="local-note"><span className="status-dot" />Shared CSV vault<br /><small>Demo only — vault passwords are stored as readable text on the server.</small></div></div>
       </aside>
 
